@@ -1,4 +1,4 @@
-# M3W: MoE-based World Model for Multi-Task Multi-Agent RL (NeurIPS'25)
+# M3W: MoE-based Multi-Task World Model (NeurIPS'25)
 
 The official implementation of the paper [Learning and Planning Multi-Agent Tasks via an MoE-based World Model](https://openreview.net/forum?id=fi24ry0BX5), which published on [NeurIPS 2025](https://neurips.cc/Conferences/2025)
 
