@@ -54,7 +54,7 @@
             "num_env_steps": 2000000,
             "save_interval": 50000,
             "train_interval": 1,
-            "update_per_train": 2,
+            "update_per_train": 1,
             "use_linear_lr_decay": false,
             "use_proper_time_limits": true,
             "use_valuenorm": false,
@@ -79,16 +79,16 @@
             "top_k": 2,
             "use_twohot": true,
             "warmup_train": true,
-            "wt_steps": 2500
+            "wt_steps": 1000
         },
         "plan": {
             "horizon": 5,
-            "iterations": 8,
+            "iterations": 4,
             "max_std": 1.0,
             "min_std": 0.05,
-            "num_elites": 32,
-            "num_pi_trajs": 16,
-            "num_samples": 512,
+            "num_elites": 16,
+            "num_pi_trajs": 8,
+            "num_samples": 256,
             "temperature": 0.5
         }
     },

@@ -648,6 +648,10 @@ class EdelineRunner:
         q_loss_total /= horizon
         balance_loss_total /= horizon
 
+        # If balance loss is non-finite, replace with zero (preserves gradients for other losses)
+        if not torch.isfinite(balance_loss_total):
+            balance_loss_total = torch.zeros_like(balance_loss_total)
+
         # -- Record per-component losses --
         info["L_rec"] = float(rec_loss_total)
         info["L_latent"] = float(latent_loss_total)
@@ -673,14 +677,22 @@ class EdelineRunner:
         info["L_reward_w"] = float(wm_cfg["reward_coef"] * reward_loss_total)
         info["L_q_w"] = float(wm_cfg["q_coef"] * q_loss_total)
 
+        # Skip update if loss is non-finite (prevents corrupting parameters)
+        if not torch.isfinite(total_loss):
+            info["L_total"] = float(total_loss)
+            info["skipped_update"] = 1.0
+            self._model_turn_off_grad()
+            return info
+        info["skipped_update"] = 0.0
+
         self.model_optimizer.zero_grad()
         total_loss.backward()
 
-        # Replace NaN gradients with zero
+        # Replace NaN/Inf gradients with zero
         for group in self.model_optimizer.param_groups:
             for p in group["params"]:
-                if p.grad is not None:
-                    p.grad.nan_to_num_(nan=0.0)
+                if p.grad is not None and not torch.isfinite(p.grad).all():
+                    p.grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
 
         # -- Gradient norms per component --
         def _grad_norm(params):

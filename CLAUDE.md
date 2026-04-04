@@ -422,8 +422,38 @@ Project: `wm-marl`. Run names include algo, env, and env-specific name:
 | `eval_avg_len` | Mean episode length |
 | `eval/video` | Rendered episode video (if env supports render) |
 
+## Implementation Tricks & Numerical Stability
+
+### MoE Router Stability
+- **`z_loss` in `NoisyTopKRouter`** (`world_models.py`): Uses `torch.logsumexp(logits, dim=-1)` instead of `log(sum(exp(logits)))`. The naive version underflows to `-inf` when logits are very negative, which poisons the total loss and kills all gradients.
+- **Balance loss guard** (`train_edeline.py`): If `L_balance` is non-finite after averaging over the horizon, it is replaced with `torch.zeros_like()` — this drops the balance penalty for that step but preserves gradient flow for all other losses. Using `torch.clamp()` would kill gradients through the clamped region.
+- **Router input sanitization** (`world_models.py`): `nan_to_num(x_flat)` before the gating linear layer prevents NaN propagation into router weights.
+- **CDF numerical stability** (`world_models.py`): The `_prob_in_top_k` method clamps CDF inputs to `[-10, 10]` and uses `validate_args=False` on the Normal distribution to avoid crashes from NaN values.
+
+### Gradient Flow
+- **Non-finite loss skip**: If `L_total` is `inf` or `nan`, the optimizer step is skipped entirely (`skipped_update=1.0` logged to wandb). This prevents corrupting model parameters.
+- **Targeted NaN/Inf grad replacement**: Only gradients that contain non-finite values are zeroed (via `nan_to_num_`), not all gradients blanket-zeroed.
+- **Gradient norms computed before clipping**: `_grad_norm()` uses `clip_grad_norm_(grads, inf)` (which returns the norm without clipping) before the actual clip to `grad_clip_norm`.
+- **MoE velocity bias stays in graph**: The `SoftMoEVelocityBias` output is added to the velocity field without `.detach()`, so gradients flow through both the flow predictor and the MoE experts.
+
+### Planner ↔ Reward Head Interface
+- The MPPI planner only has agent hidden states `h` during imagination rollouts, but `SparseMoEReward` expects full `[z_flat; d; h]` per agent. The planner **zero-pads** the latent portion: `s_t = concat([zeros(latent_dim); h] for each agent)`. This is a valid approximation since the reward head learns to rely primarily on `h` during planning.
+
+### Dimension Sizing for Scalar Observations
+- MuJoCo observations are low-dimensional scalars (obs_dim=21). Using oversized latent dimensions (e.g., latent_dim=1536) wastes GPU memory and slows convergence. The default config uses `num_cats=8, cat_dim=8, sem_dim=64, hidden_dim=128` (latent_dim=128), which is ~12x smaller and appropriate for the observation complexity.
+- Rule of thumb: `latent_dim` should be 4-8x the observation dimension for scalar envs.
+
+### Warmup Buffer Sizing
+- `warmup_steps` must produce more transitions than `batch_size`. With `n_rollout_threads=16` and `warmup_steps=20000`, the buffer collects 20K transitions — just above `batch_size=16384`. Don't reduce warmup below `batch_size / n_rollout_threads * n_rollout_threads`.
+- `wt_steps` (warmup training iterations) can be reduced with large batch sizes since each step processes more data (1000 steps at batch_size=16384 is equivalent to 16M sample-updates).
+
+### VAE Temperature Annealing
+- Gumbel-Softmax temperature anneals from `tau_start=1.0` to `tau_end=0.1` over `gumbel_anneal_steps`. The step counter advances on every `DualEncoder.forward()` call during training.
+- For faster world model convergence, use a shorter annealing schedule (e.g., 30K steps instead of 100K). This makes the categorical VAE sharpen its one-hot outputs earlier, giving the flow predictor cleaner targets sooner.
+
 ## Known Compatibility Notes
 
 - **gym 0.26**: The MuJoCo wrappers in `m3w/envs/mujoco/multiagent_mujoco/mujoco_multi.py` have been patched for gym 0.26 (5-value step return, removed `.seed()`, private attribute access via `.unwrapped`).
 - **Cython**: mujoco_py requires `cython<3` (Cython 3.x has incompatible callback signatures).
 - **Python 3.8**: All EDELINE-MARL code uses `typing.List`/`Dict`/`Optional` (not `list[...]`/`dict[...]`).
+- **M3W planner constraint**: The original M3W runner asserts `n_eval_rollout_threads == n_rollout_threads` (needed for MPPI running mean). Both must be equal in the M3W config.

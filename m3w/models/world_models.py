@@ -238,7 +238,7 @@ class NoisyTopKRouter(nn.Module):
 
     @staticmethod
     def z_loss(logits):
-        return torch.log(torch.exp(logits).sum(-1)).mean()
+        return torch.logsumexp(logits, dim=-1).mean()
 
     @staticmethod
     def _gates_to_load(gates):

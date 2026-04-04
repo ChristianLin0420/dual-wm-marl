@@ -71,6 +71,7 @@ class MockRewardHead(nn.Module):
         self.num_bins = num_bins
         self.n_agents = n_agents
         self.hidden_dim = hidden_dim
+        self.per_agent_dim = hidden_dim  # mock: no latent padding needed
 
     def forward(self, s_t):
         B = s_t.shape[0]

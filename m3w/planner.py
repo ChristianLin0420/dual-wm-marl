@@ -309,14 +309,22 @@ class MPPIPlanner:
             for _ in range(N)
         ]
 
+        # Compute per-agent padding dim: reward head expects [z_flat; d; h] per agent
+        # but planner only has h. Pad with zeros for z_flat and d.
+        hidden_dim = cur_h[0].shape[-1]
+        per_agent_dim = world_model.reward_head.per_agent_dim
+        pad_dim = per_agent_dim - hidden_dim  # = latent_dim (z_flat + d)
+
         for t in range(horizon):
             # Build the concatenated state for reward prediction
-            # s_t = concat over agents of [x_hat^i; h^i]
-            # For simplicity in the planner, we use h as the state representation
+            # Pad each agent's h with zeros for the latent portion
             state_parts = []
             for i in range(N):
-                state_parts.append(cur_h[i])
-            # Flatten into (B*num_samples, N*hidden_dim)
+                pad = torch.zeros(
+                    cur_h[i].shape[0], pad_dim,
+                    device=cur_h[i].device, dtype=cur_h[i].dtype,
+                )
+                state_parts.append(torch.cat([pad, cur_h[i]], dim=-1))
             s_t = torch.cat(state_parts, dim=-1)
 
             # Predict reward
