@@ -79,7 +79,53 @@
             "top_k": 2,
             "use_twohot": true,
             "warmup_train": true,
-            "wt_steps": 2500
+            "wt_steps": 2500,
+            "grad_clip_norm": 20.0,
+
+            "num_cats": 8,
+            "cat_dim": 8,
+            "sem_dim": 64,
+            "hidden_dim": 128,
+
+            "ssm_num_heads": 8,
+            "ssm_num_layers": 3,
+            "ssm_cross_num_heads": 4,
+            "ssm_dropout": 0.1,
+            "ssm_ffn_multiplier": 4,
+
+            "flow_steps_train": 8,
+            "flow_steps_infer": 1,
+            "flow_tau_embed_dim": 64,
+            "shortcut_lambda": 0.1,
+
+            "num_experts": 8,
+            "num_slots": 1,
+            "expert_hidden_dim": 256,
+            "num_reward_bins": 51,
+            "reward_expert_ffn_hidden": 512,
+            "reward_expert_n_heads": 1,
+            "reward_expert_dropout": 0.0,
+            "reward_head_hidden": 256,
+            "continue_hidden_dim": 128,
+
+            "gumbel_tau_start": 1.0,
+            "gumbel_tau_end": 0.1,
+            "gumbel_anneal_steps": 100000,
+            "barlow_twins_lambda": 0.005,
+            "aug_dropout": 0.1,
+
+            "accpc_steps_ahead": 3,
+            "accpc_temperature": 0.1,
+
+            "loss_weights": {
+                "pred": 1.0,
+                "rec": 1.0,
+                "rep": 0.1,
+                "dyn": 1.0,
+                "cpc": 0.1,
+                "latent": 1.0,
+                "flow": 1.0
+            }
         },
         "plan": {
             "horizon": 5,
@@ -89,7 +135,8 @@
             "num_elites": 32,
             "num_pi_trajs": 16,
             "num_samples": 512,
-            "temperature": 0.5
+            "temperature": 0.5,
+            "use_plan": true
         }
     },
     "env_args": {
@@ -104,9 +151,9 @@
         }
     },
     "main_args": {
-        "algo": "m3w",
+        "algo": "edeline_marl",
         "env": "mujoco",
-        "exp_name": "installtest",
+        "exp_name": "edeline_marl_default",
         "load_config": ""
     }
 }

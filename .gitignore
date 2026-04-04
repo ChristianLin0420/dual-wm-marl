@@ -1,0 +1,20 @@
+# Claude
+.claude/
+
+# Wandb
+wandb/
+
+# Results
+results/
+
+
+# m3w
+m3w.egg-info/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+
+# Python cache
+*.py[cod]
+# End of Selection
+```

@@ -80,8 +80,11 @@ class MujocoMulti(MultiAgentEnv):
         else:
             assert False, "not implemented!"
         self.timelimit_env = self.wrapped_env.env
-        self.timelimit_env._max_episode_steps = self.episode_limit
-        self.env = self.timelimit_env.env
+        try:
+            self.timelimit_env._max_episode_steps = self.episode_limit
+        except AttributeError:
+            self.timelimit_env.unwrapped._max_episode_steps = self.episode_limit
+        self.env = self.timelimit_env.env if hasattr(self.timelimit_env, 'env') else self.timelimit_env
         self.timelimit_env.reset()
         self.obs_size = self.get_obs_size()
         self.share_obs_size = self.get_state_size()
@@ -131,7 +134,13 @@ class MujocoMulti(MultiAgentEnv):
             ]
         )
 
-        obs_n, reward_n, done_n, info_n = self.wrapped_env.step(flat_actions)
+        step_result = self.wrapped_env.step(flat_actions)
+        if len(step_result) == 5:
+            # gym >= 0.26: (obs, reward, terminated, truncated, info)
+            obs_n, reward_n, terminated, truncated, info_n = step_result
+            done_n = terminated or truncated
+        else:
+            obs_n, reward_n, done_n, info_n = step_result
         self.steps += 1
 
         info = {}
@@ -147,7 +156,7 @@ class MujocoMulti(MultiAgentEnv):
 
     def get_obs(self):
         """Returns all agent observations in a list"""
-        state = self.env._get_obs()
+        state = self.env.unwrapped._get_obs()
         obs_n = []
         for a in range(self.n_agents):
             agent_id_feats = np.zeros(self.n_agents, dtype=np.float32)
@@ -162,7 +171,7 @@ class MujocoMulti(MultiAgentEnv):
 
     def get_obs_agent(self, agent_id):
         if self.agent_obsk is None:
-            return self.env._get_obs()
+            return self.env.unwrapped._get_obs()
         else:
             # return build_obs(self.env,
             #                       self.k_dicts[agent_id],
@@ -187,7 +196,7 @@ class MujocoMulti(MultiAgentEnv):
 
     def get_state(self, team=None):
         # TODO: May want global states for different teams (so cannot see what the other team is communicating e.g.)
-        state = self.env._get_obs()
+        state = self.env.unwrapped._get_obs()
         state_normed = (state - np.mean(state)) / np.std(state)
         share_obs = []
         for a in range(self.n_agents):
@@ -221,7 +230,8 @@ class MujocoMulti(MultiAgentEnv):
     def reset(self, **kwargs):
         """ Returns initial observations and states"""
         self.steps = 0
-        self.timelimit_env.reset()
+        reset_result = self.timelimit_env.reset()
+        # gym >= 0.26 returns (obs, info); ignore extra values
         return self.get_obs()
 
     def render(self, **kwargs):
@@ -232,7 +242,11 @@ class MujocoMulti(MultiAgentEnv):
         # raise NotImplementedError
 
     def seed(self, args):
-        self.wrapped_env.seed(args)
+        try:
+            self.wrapped_env.seed(args)
+        except (AttributeError, TypeError):
+            # gym >= 0.26 removed .seed(); seed is passed via reset(seed=...)
+            pass
 
     def get_env_info(self):
 

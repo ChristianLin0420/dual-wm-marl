@@ -255,9 +255,12 @@ class NoisyTopKRouter(nn.Module):
         threshold_positions_if_out = threshold_positions_if_in - 1
         threshold_if_out = torch.unsqueeze(torch.gather(top_values_flat, 0, threshold_positions_if_out), 1)
 
-        normal = Normal(self.mean, self.std)
-        prob_if_in = normal.cdf((clean_values - threshold_if_in) / noise_stddev)
-        prob_if_out = normal.cdf((clean_values - threshold_if_out) / noise_stddev)
+        normal = Normal(self.mean, self.std, validate_args=False)
+        noise_stddev = noise_stddev.clamp(min=1e-6)
+        cdf_in = ((clean_values - threshold_if_in) / noise_stddev).clamp(-10, 10)
+        cdf_out = ((clean_values - threshold_if_out) / noise_stddev).clamp(-10, 10)
+        prob_if_in = normal.cdf(cdf_in)
+        prob_if_out = normal.cdf(cdf_out)
         prob = torch.where(is_in, prob_if_in, prob_if_out)
         return prob
 
@@ -270,6 +273,7 @@ class NoisyTopKRouter(nn.Module):
           logits: [B, N_e]
           aux:    dict(loss_balancing=..., importance=..., load=...)
         """
+        x_flat = torch.nan_to_num(x_flat, nan=0.0)
         clean_logits = x_flat @ self.w_gate  # [B, N_e]
         if self.noisy_gating and self.training:
             raw_noise_stddev = x_flat @ self.w_noise

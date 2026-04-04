@@ -11,17 +11,17 @@ def main():
         default="configs/mujoco/installtest/m3w/config.json",
         help="Path to config file"
     )
-    args = parser.parse_args()
+    parsed = parser.parse_args()
 
-    with open(args["load_config"], encoding="utf-8") as file:
+    with open(parsed.load_config, encoding="utf-8") as file:
         all_config = json.load(file)
-    args["algo"] = all_config["main_args"]["algo"]
-    args["env"] = all_config["main_args"]["env"]
-    args["exp_name"] = all_config["main_args"]["exp_name"]
+    args = {
+        "algo": all_config["main_args"]["algo"],
+        "env": all_config["main_args"]["env"],
+        "exp_name": all_config["main_args"]["exp_name"],
+    }
     algo_args = all_config["algo_args"]
     env_args = all_config["env_args"]
-
-    # start training
 
     runner = WorldModelRunner(args, algo_args, env_args)
     runner.run()

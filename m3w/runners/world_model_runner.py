@@ -79,10 +79,17 @@ class WorldModelRunner:
         self.run_dir, self.save_dir, self.log_file, self.task_name, self.expt_name = self.init_config()
 
         if algo_args["logger"].get("wandb", False):
+            env_names = "_".join(env_args.get("envs", {}).keys())
+            run_name = (
+                f"m3w_{args['env']}_{env_names}"
+                f"_{env_args.get('n_agents', 2)}ag"
+                f"_{env_args.get('n_tasks', 2)}task"
+                f"_s{algo_args['seed']['seed']}"
+            )
             wandb.init(
-                project="hawm_" + self.task_name,
+                project="wm-marl",
                 group=args["algo"],
-                name=self.expt_name,
+                name=run_name,
                 config={"main_args": args, "algo_args": algo_args, "env_args": env_args},
             )
         setproctitle.setproctitle("what-can-I-say?-mamba-out")
@@ -923,23 +930,19 @@ class WorldModelRunner:
         balance_loss /= self.horizon
         # endregion
         
-        train_info["dynamics_loss"] = float(dynamics_loss)
-        train_info["reward_loss"] = float(reward_loss)
-        train_info["q_loss"] = float(q_loss)
-        train_info["balance_loss"] = float(balance_loss)
-        
+        # Use same metric names as EDELINE-MARL for shared wandb panels
+        train_info["L_dynamics"] = float(dynamics_loss)
+        train_info["L_reward"] = float(reward_loss)
+        train_info["L_q"] = float(q_loss)
+        train_info["L_balance"] = float(balance_loss)
+
         total_loss = (
                 q_loss * self.algo_args["world_model"]["q_coef"]
                 + reward_loss * self.algo_args["world_model"]["reward_coef"]
                 + dynamics_loss * self.algo_args["world_model"]["dynamics_coef"]
                 + balance_loss * self.algo_args["world_model"]["balance_coef"]
         )
-        train_info["total_loss"] = (
-                train_info["q_loss"] * self.algo_args["world_model"]["q_coef"]
-                + train_info["reward_loss"] * self.algo_args["world_model"]["reward_coef"]
-                + train_info["dynamics_loss"] * self.algo_args["world_model"]["dynamics_coef"]
-                + train_info["balance_loss"] * self.algo_args["world_model"]["balance_coef"]
-        )
+        train_info["L_total"] = float(total_loss)
         
         self.model_optimizer.zero_grad()
         total_loss.backward()
@@ -1041,10 +1044,18 @@ class WorldModelRunner:
         return run_dir, save_dir, log_file, task, expt_name
 
     def console_log(self, _step, **kwargs):
-        if self.algo_args["logger"]["wandb"]:
-            for key, value in kwargs.items():
-                if value == value:  # nan
-                    wandb.log(value, step=self.total_it)
+        if self.algo_args["logger"].get("wandb", False):
+            wandb_dict = {"global_step": self.total_it}
+            for group_name, metrics in kwargs.items():
+                if isinstance(metrics, dict):
+                    for k, v in metrics.items():
+                        if isinstance(v, (int, float, np.floating, np.integer)):
+                            wandb_dict[f"{group_name}/{k}"] = float(v)
+                        elif isinstance(v, list):
+                            for idx, vi in enumerate(v):
+                                if isinstance(vi, (int, float, np.floating, np.integer)):
+                                    wandb_dict[f"{group_name}/{k}_agent{idx}"] = float(vi)
+            wandb.log(wandb_dict, step=self.total_it)
 
         print_lines = [
             "",
@@ -1057,7 +1068,14 @@ class WorldModelRunner:
         ]
 
         for key, value in kwargs.items():
-            print_lines.append("%s" % key + "".join([", %s: %.6f" % (k, v) for k, v in value.items()]))
+            if isinstance(value, dict):
+                parts = []
+                for k, v in value.items():
+                    if isinstance(v, (int, float, np.floating, np.integer)):
+                        parts.append(f"{k}: {v:.6f}")
+                    elif isinstance(v, list):
+                        parts.append(f"{k}: [{', '.join(f'{vi:.4f}' for vi in v)}]")
+                print_lines.append(f"{key}: {', '.join(parts)}")
 
         for line in print_lines:
             print(line)
