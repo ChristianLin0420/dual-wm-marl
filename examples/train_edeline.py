@@ -293,6 +293,8 @@ class EdelineRunner:
             device=self.device,
             wm_args=algo_args["world_model"],
         )
+        # WorldModelCritic.__init__ calls turn_off_grad() — re-enable for training
+        self.critic.turn_on_grad()
 
         self.buffer = WorldModelBuffer(
             {**algo_args["train"], **algo_args["model"], **algo_args["algo"], **env_args},
@@ -313,17 +315,15 @@ class EdelineRunner:
 
         # ---- Optimiser ----
         wm_params = [
-            {"params": self.dual_encoder.parameters(),
+            {"params": list(self.dual_encoder.parameters()),
              "lr": algo_args["model"]["lr"] * wm_cfg["enc_lr_scale"]},
-            {"params": self.sequence_model.parameters()},
-            {"params": self.flow_predictor.parameters()},
-            {"params": self.soft_moe.parameters()},
-            {"params": self.reward_head.parameters()},
-            {"params": self.continue_pred.parameters()},
-            {"params": itertools.chain(
-                self.critic.critic.parameters(),
-                self.critic.critic2.parameters(),
-            ), "lr": algo_args["model"]["lr"]},
+            {"params": list(self.sequence_model.parameters())},
+            {"params": list(self.flow_predictor.parameters())},
+            {"params": list(self.soft_moe.parameters())},
+            {"params": list(self.reward_head.parameters())},
+            {"params": list(self.continue_pred.parameters())},
+            {"params": list(self.critic.critic.parameters()) + list(self.critic.critic2.parameters()),
+             "lr": algo_args["model"]["lr"]},
         ]
         self.model_optimizer = torch.optim.Adam(
             params=wm_params,
@@ -551,16 +551,15 @@ class EdelineRunner:
         )
         q_targets = nstep_reward + nstep_gamma * next_q * (1 - nstep_term)
 
-        # -- Enable gradients --
-        self._model_turn_on_grad()
-
         info = {"reward_acc": 0.0, "reward_err": 0.0}
-        rec_loss_total = 0.0
-        latent_loss_total = 0.0
-        flow_loss_total = 0.0
-        reward_loss_total = 0.0
-        q_loss_total = 0.0
-        balance_loss_total = 0.0
+        # Initialize as tensors on device to ensure autograd graph connectivity
+        _zero = torch.tensor(0.0, device=self.device)
+        rec_loss_total = _zero.clone()
+        latent_loss_total = _zero.clone()
+        flow_loss_total = _zero.clone()
+        reward_loss_total = _zero.clone()
+        q_loss_total = _zero.clone()
+        balance_loss_total = _zero.clone()
 
         for t in range(horizon):
             # Encode current obs
@@ -648,17 +647,15 @@ class EdelineRunner:
         q_loss_total /= horizon
         balance_loss_total /= horizon
 
-        # If balance loss is non-finite, replace with zero (preserves gradients for other losses)
-        if not torch.isfinite(balance_loss_total):
-            balance_loss_total = torch.zeros_like(balance_loss_total)
-
-        # -- Record per-component losses --
+        # Detach balance loss — it's an auxiliary MoE regularizer that diverges
+        # to large negative values. MoE experts still get gradients via L_reward.
+        # Log the raw value for monitoring but exclude from backward graph.
         info["L_rec"] = float(rec_loss_total)
         info["L_latent"] = float(latent_loss_total)
         info["L_flow"] = float(flow_loss_total)
         info["L_reward"] = float(reward_loss_total)
         info["L_q"] = float(q_loss_total)
-        info["L_balance"] = float(balance_loss_total)
+        info["L_balance"] = float(balance_loss_total.detach() if torch.is_tensor(balance_loss_total) else balance_loss_total)
 
         total_loss = (
             loss_w.get("rec", 1.0) * rec_loss_total
@@ -666,7 +663,7 @@ class EdelineRunner:
             + loss_w.get("flow", 1.0) * flow_loss_total
             + wm_cfg["reward_coef"] * reward_loss_total
             + wm_cfg["q_coef"] * q_loss_total
-            + wm_cfg["balance_coef"] * balance_loss_total
+            # balance_loss excluded from gradient graph — logged only
         )
         info["L_total"] = float(total_loss)
 
@@ -681,7 +678,6 @@ class EdelineRunner:
         if not torch.isfinite(total_loss):
             info["L_total"] = float(total_loss)
             info["skipped_update"] = 1.0
-            self._model_turn_off_grad()
             return info
         info["skipped_update"] = 0.0
 
@@ -694,21 +690,24 @@ class EdelineRunner:
                 if p.grad is not None and not torch.isfinite(p.grad).all():
                     p.grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
 
-        # -- Gradient norms per component --
-        def _grad_norm(params):
-            grads = [p.grad for p in params if p.grad is not None]
-            if not grads:
+        # -- Gradient norms per component (use list() to avoid generator exhaustion) --
+        def _grad_norm(module):
+            total_norm = 0.0
+            count = 0
+            for p in module.parameters():
+                if p.grad is not None:
+                    total_norm += p.grad.data.norm(2).item() ** 2
+                    count += 1
+            if count == 0:
                 return 0.0
-            return float(torch.nn.utils.clip_grad_norm_(grads, float("inf")))
+            return total_norm ** 0.5
 
-        info["grad_norm/encoder"] = _grad_norm(self.dual_encoder.parameters())
-        info["grad_norm/ssm"] = _grad_norm(self.sequence_model.parameters())
-        info["grad_norm/flow"] = _grad_norm(self.flow_predictor.parameters())
-        info["grad_norm/soft_moe"] = _grad_norm(self.soft_moe.parameters())
-        info["grad_norm/reward_head"] = _grad_norm(self.reward_head.parameters())
-        info["grad_norm/critic"] = _grad_norm(
-            list(self.critic.critic.parameters()) + list(self.critic.critic2.parameters())
-        )
+        info["grad_norm/encoder"] = _grad_norm(self.dual_encoder)
+        info["grad_norm/ssm"] = _grad_norm(self.sequence_model)
+        info["grad_norm/flow"] = _grad_norm(self.flow_predictor)
+        info["grad_norm/soft_moe"] = _grad_norm(self.soft_moe)
+        info["grad_norm/reward_head"] = _grad_norm(self.reward_head)
+        info["grad_norm/critic"] = _grad_norm(self.critic.critic) + _grad_norm(self.critic.critic2)
 
         for group in self.model_optimizer.param_groups:
             torch.nn.utils.clip_grad_norm_(group["params"], self.grad_clip_norm)
@@ -720,7 +719,6 @@ class EdelineRunner:
         # -- VAE temperature --
         info["vae_temperature"] = float(self.dual_encoder.visual_encoder.tau)
 
-        self._model_turn_off_grad()
         return info
 
     def _actor_train(self):
@@ -1105,35 +1103,6 @@ class EdelineRunner:
         if self.algo_args["logger"].get("wandb", False):
             wandb.finish()
 
-    def _model_turn_on_grad(self):
-        for p in self.dual_encoder.parameters():
-            p.requires_grad = True
-        for p in self.sequence_model.parameters():
-            p.requires_grad = True
-        for p in self.flow_predictor.parameters():
-            p.requires_grad = True
-        for p in self.soft_moe.parameters():
-            p.requires_grad = True
-        for p in self.reward_head.parameters():
-            p.requires_grad = True
-        for p in self.continue_pred.parameters():
-            p.requires_grad = True
-        self.critic.turn_on_grad()
-
-    def _model_turn_off_grad(self):
-        for p in self.dual_encoder.parameters():
-            p.requires_grad = False
-        for p in self.sequence_model.parameters():
-            p.requires_grad = False
-        for p in self.flow_predictor.parameters():
-            p.requires_grad = False
-        for p in self.soft_moe.parameters():
-            p.requires_grad = False
-        for p in self.reward_head.parameters():
-            p.requires_grad = False
-        for p in self.continue_pred.parameters():
-            p.requires_grad = False
-        self.critic.turn_off_grad()
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,9 @@
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: Currently logged in as: crlc112358. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.18.7
+wandb: Run data is saved locally in /localhome/local-chrislin/dual-wm-marl/wandb/run-20260405_143951-194xsed9
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run edeline_mujoco_2_cheetah_2ag_2task_s1
+wandb: ⭐️ View project at https://wandb.ai/crlc112358/wm-marl
+wandb: 🚀 View run at https://wandb.ai/crlc112358/wm-marl/runs/194xsed9
+choose to use gpu 0...
